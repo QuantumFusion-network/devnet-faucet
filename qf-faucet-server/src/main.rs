@@ -42,8 +42,8 @@ struct StorageError;
 
 impl Reject for StorageError {}
 
-fn get_db() -> SqlResult<Connection> {
-    let conn = Connection::open("transfers.db")?;
+fn init_db() {
+    let conn = get_db().expect("Init DB Error");
     conn.execute(
         "CREATE TABLE IF NOT EXISTS transfers (
             id INTEGER PRIMARY KEY,
@@ -53,7 +53,29 @@ fn get_db() -> SqlResult<Connection> {
             tx_hash TEXT NOT NULL
         )",
         [],
-    )?;
+    ).expect("Create Table Error");
+    
+    // Add index on address column
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transfers_address ON transfers (address)",
+        [],
+    ).expect("Create Index Error");
+    
+    // Add index on timestamp column
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transfers_timestamp ON transfers (timestamp)",
+        [],
+    ).expect("Create Index Error");
+    
+    // Add composite index on both address and timestamp for the specific query pattern
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transfers_address_timestamp ON transfers (address, timestamp)",
+        [],
+    ).expect("Create Index Error");
+}
+
+fn get_db() -> SqlResult<Connection> {
+    let conn = Connection::open("transfers.db")?;
     Ok(conn)
 }
 
@@ -71,11 +93,18 @@ fn can_transfer(address: &str, timeout: Option<u64>) -> SqlResult<bool> {
     let now = Utc::now().timestamp() as u64;
     let two_hours_ago = now - (timeout.unwrap_or_else(|| 120) * 60);
 
+    // Check if there are recent transfers
     let count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM transfers 
         WHERE address = ?1 AND timestamp > ?2",
         [address, format!("{}", two_hours_ago).as_str()],
         |row| row.get(0),
+    )?;
+    
+    // Delete all previous transfers from this address that are older than the timeout
+    conn.execute(
+        "DELETE FROM transfers WHERE address = ?1 AND timestamp < ?2",
+        [address, format!("{}", two_hours_ago).as_str()],
     )?;
 
     Ok(count == 0)
@@ -252,6 +281,7 @@ async fn main() {
         .or(tokens_route);
 
     println!("Server started at {host}:{port} with node address {rpc_endpoint:?}");
+    init_db();
     warp::serve(routes)
         .run((host.parse::<std::net::IpAddr>().unwrap(), port))
         .await;
