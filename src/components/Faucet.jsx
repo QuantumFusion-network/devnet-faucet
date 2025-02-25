@@ -203,39 +203,21 @@ const FaucetStep = () => {
       if (!account || !api) return;
 
       try {
-        setLoading(true);
-        setStatus('Requesting tokens...');
+          setLoading(true);
+          setStatus('Requesting tokens...');
 
-        console.log("web3FromSource()", account);
 
-        const allInjected = await web3Enable('QFN/faucet');
+          const url = import.meta.env;
 
-        // Make the actual faucet request
-        const MNEMONIC = '{RND_MNEM_KEY}';
-        const keyring = new Keyring({ type: 'sr25519', ss58Format: 2 });
-        const bot = keyring.createFromUri(MNEMONIC);
+          if(!url) {
+            setStatus('Api url not provided ');
+            setLoading(false);
+            return
+          }
 
-        // Sign and send the transaction
-        const transfer = await api.tx.balances
-            .transferKeepAlive(account.address, Number(FAUCET_AMOUNT));
-
-        const txHash = await transfer.signAndSend(
-            bot,
-            ({ status: txStatus, events = [] }) => {
-              if (txStatus.isInBlock) {
-                setStatus(`Transaction included in block '${txStatus.asInBlock}'`);
-              } else if (txStatus.isFinalized) {
-                // Find transfer event and get amount
-                events.forEach(({ event: { method, section, data } }) => {
-                  if (section === 'balances' && method === 'Transfer') {
-                    const [, , amount] = data;
-                    setStatus(`Received ${amount.toString() / 1e10} tokens!`);
-                  }
-                });
-                setLoading(false);
-              }
-            }
-          );
+          const txHash = await (await fetch(`${url}/get/tokens`)).json()
+          setStatus(`Received tokens! txhash: ${txHash}`);
+          setLoading(false);
 
           console.log(`Submitted with hash '${txHash}'`);
 
@@ -314,7 +296,7 @@ const Faucet = () => {
   const [openStep, setOpenStep] = useState(1);
   const [stepsCompleted, setStepsCompleted] = useState({
     1: false,
-    2: false
+    2: false,
   });
 
   const completeStep = (step) => {
