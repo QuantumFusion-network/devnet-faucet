@@ -226,7 +226,7 @@ struct Cli {
 struct ServerConfig {
     rpc_url: String,
     debug: bool,
-    timeout: Option<u64>,
+    timeout: u64,
 }
 
 impl ServerConfig {
