@@ -12,6 +12,7 @@ use clap::Parser;
 use subxt::utils::{MultiAddress, AccountId32};
 use rusqlite::{Connection, Result as SqlResult};
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 
 
 #[subxt::subxt(runtime_metadata_path = "metadata.scale", derive_for_all_types = "PartialEq, Eq")]
@@ -20,27 +21,20 @@ pub mod polkadot {}
 const RPC_URL: &str = "wss://dev.qfnetwork.xyz/socket";
 const FAUCET_AMOUNT: u128 = 20_000_000_000;
 
-use serde::{Deserialize, Serialize};
-
 #[derive(Debug, Deserialize, Serialize)]
 struct DripRequest {
     address: String,
 }
 
 #[derive(Debug)]
-struct TransferError;
+enum Errors {
+    TransferError,
+    StorageError,
+    SomeError,
+}
 
-impl Reject for TransferError {}
 
-#[derive(Debug)]
-struct SomeError;
-
-impl Reject for SomeError {}
-
-#[derive(Debug)]
-struct StorageError;
-
-impl Reject for StorageError {}
+impl Reject for Errors {}
 
 fn init_db() {
     let conn = get_db().expect("Init DB Error");
@@ -79,11 +73,20 @@ fn get_db() -> SqlResult<Connection> {
     Ok(conn)
 }
 
-fn store_transfer(address: &str, amount: u64, tx_hash: &str) -> SqlResult<()> {
+fn store_transfer(address: &str, amount: u64, tx_hash: &str, time: i64) -> SqlResult<()> {
     let conn = get_db()?;
     conn.execute(
         "INSERT INTO transfers (address, amount, timestamp, tx_hash) VALUES (?1, ?2, ?3, ?4)",
-        (address, amount, Utc::now().timestamp(), tx_hash),
+        (address, amount, time, tx_hash),
+    )?;
+    Ok(())
+}
+
+fn update_transfer(address: &str, time: i64, tx_hash: &str) -> SqlResult<()> {
+    let conn = get_db()?;
+    conn.execute(
+        "UPDATE transfers SET tx_hash = ?2 WHERE address = ?1 AND timestamp = ?3",
+        (address, tx_hash, time),
     )?;
     Ok(())
 }
@@ -114,7 +117,7 @@ async fn transfer_tokens(body: DripRequest, config: ServerConfig) -> Result<impl
     let can_transfer = can_transfer(body.address.as_str(), config.timeout)
         .map_err(|e| {
             println!("Error checking transfer: {:?}", e);
-            warp::reject::custom(StorageError)
+            warp::reject::custom(Errors::StorageError)
         })?;
     
     if !can_transfer {
@@ -124,27 +127,27 @@ async fn transfer_tokens(body: DripRequest, config: ServerConfig) -> Result<impl
     let account_bytes = hex::decode(&body.address)
         .map_err(|e| {
             println!("Error: {:?}", e);
-            warp::reject::custom(SomeError)
+            warp::reject::custom(Errors::SomeError)
         })?;
 
     let account_array: [u8; 32] = account_bytes[..32].try_into()
         .map_err(|e| {
             println!("Error: {:?}", e);
-            warp::reject::custom(SomeError)
+            warp::reject::custom(Errors::SomeError)
         })?;
     let rpc_endpoint = config.rpc_url;
     let api = OnlineClient::<PolkadotConfig>::from_url(rpc_endpoint)
         .await
         .map_err(|e| {
             println!("Error: {:?}", e);
-            warp::reject::custom(SomeError)
+            warp::reject::custom(Errors::SomeError)
         })?;
 
     // Create a keypair from the provided address
     let mnemonic = env::var("MNEMONIC").expect("MNEMONIC is not set");
-    let phrase = Mnemonic::from_str(mnemonic.as_str()).map_err(|e| {
+    let phrase = Mnemonic::from_str(&mnemonic).map_err(|e| {
         println!("Error: {:?}", e);
-        warp::reject::custom(SomeError)
+        warp::reject::custom(Errors::SomeError)
     })?;
 
     let from;
@@ -154,7 +157,7 @@ async fn transfer_tokens(body: DripRequest, config: ServerConfig) -> Result<impl
     } else {
         from = sr25519::Keypair::from_phrase(&phrase, None).map_err(|e| {
             println!("Error: {:?}", e);
-            warp::reject::custom(SomeError)
+            warp::reject::custom(Errors::SomeError)
         })?;
     }
     
@@ -162,6 +165,16 @@ async fn transfer_tokens(body: DripRequest, config: ServerConfig) -> Result<impl
 
 
     let transfer = polkadot::tx().balances().transfer_keep_alive(dest, FAUCET_AMOUNT.into());
+    let now = Utc::now().timestamp();
+    let _ = store_transfer(
+        &body.address,
+        (FAUCET_AMOUNT / 10_000_000_000) as u64,
+        "",
+    now)
+        .map_err(|e| {
+            println!("Error store the transfer: {:?}", e);
+            warp::reject::custom(Errors::StorageError)
+        })?;
 
     let events = api
         .tx()
@@ -169,24 +182,25 @@ async fn transfer_tokens(body: DripRequest, config: ServerConfig) -> Result<impl
         .await
         .map_err(|e| {
             println!("Error Submit transfer: {:?}", e);
-            warp::reject::custom(TransferError)
+            warp::reject::custom(Errors::TransferError)
         })?
         .wait_for_finalized_success()
         .await
         .map_err(|e| {
             println!("Error transfer not finalized: {:?}", e);
-            warp::reject::custom(TransferError)
+            warp::reject::custom(Errors::TransferError)
         })?;
-    
-    let _ = store_transfer(body.address.as_str(), 2, format!("{}", events.extrinsic_hash()).as_str())
-        .map_err(|e| {
-            println!("Error store the transfer: {:?}", e);
-            warp::reject::custom(StorageError)
-        })?;
+    update_transfer(
+        &body.address,
+        now,
+        &events.extrinsic_hash().to_string(),
+    ).map_err(|e| {
+        println!("Error update the transfer: {:?}", e);
+        warp::reject::custom(Errors::StorageError)
+    })?;
 
     Ok(warp::reply::json(&format!("Extrinsic submitted: {:?}", events.extrinsic_hash())))
 }
-
 #[derive(Parser, Debug)]
 #[command(name = "QF faucet bot server")]
 #[command(version = "1.0")]

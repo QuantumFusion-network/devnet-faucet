@@ -1,5 +1,15 @@
 # QFN Faucet Server
 
+## Usage
+For update a chain metadata, you need to run the command:
+```bash
+curl -X POST -H "Content-Type: application/json" -d @<path_to_metadata.json> http://<host>:<port>/metadata
+```
+or
+```bash
+subxt metadata -f bytes > metadata.scale
+```
+
 ## Installation
 ```bash
 cargo build --release
