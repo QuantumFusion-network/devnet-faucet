@@ -69,8 +69,7 @@ fn init_db() {
 }
 
 fn get_db() -> SqlResult<Connection> {
-    let conn = Connection::open("transfers.db")?;
-    Ok(conn)
+    Connection::open("transfers.db")
 }
 
 fn store_transfer(address: &str, amount: u64, tx_hash: &str, time: i64) -> SqlResult<()> {
@@ -206,15 +205,15 @@ async fn transfer_tokens(body: DripRequest, config: ServerConfig) -> Result<impl
 #[command(version = "1.0")]
 #[command(about = "QF server for crediting by dev tokens", long_about = None)]
 struct Cli {
-    /// Host can set from env HOST or this option [default: 0.0.0.0]
-    #[arg(long = "host", short = 'H')]
-    ip: Option<String>,
-    /// Port can set from env PORT or this option [default: 8080]
-    #[arg(short = 'P', long)]
-    port: Option<String>,
-    /// RPC url can set from env RPC_URL or this option [default: wss://dev.qfnetwork.xyz/socket]
-    #[arg(short, long)]
-    rpc_url: Option<String>,
+    /// Host can set from env HOST or this option
+    #[arg(long = "host", env = "HOST", short = 'H', default_value = "0.0.0.0")]
+    ip: String,
+    /// Port can set from env PORT or this option
+    #[arg(short = 'P', env = "PORT", long, default_value = "8080")]
+    port: u16,
+    /// RPC url can set from env RPC_URL or this option
+    #[arg(short, long, env = "RPC_URL", default_value = RPC_URL)]
+    rpc_url: String,
     /// In debug mode the sender is Alice
     #[arg(short, long, action)]
     debug: bool,
@@ -256,29 +255,11 @@ async fn main() {
         println!("The sender is Alice");
     }
 
-    let rpc_endpoint;
-    if cli.rpc_url.is_some() {
-        rpc_endpoint = cli.rpc_url.expect("RPC_URL is empty");
-    } else {
-        rpc_endpoint = env::var("RPC_URL").unwrap_or_else(|_| RPC_URL.to_string());
-    }
+    let rpc_endpoint = cli.rpc_url;
 
-    let host;
-    if cli.ip.is_some() {
-        host = cli.ip.expect("HOST is empty");
-    } else {
-        host = env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
-    }
-    let port;
-    if cli.port.is_some() {
-        port = cli.port.unwrap().to_string()
-            .parse::<u16>()
-            .expect("PORT must be a number");
-    } else {
-        port = env::var("PORT").unwrap_or_else(|_| "8080".to_string())
-            .parse::<u16>()
-            .expect("PORT must be a number");
-    }
+    let host = cli.ip;
+    
+    let port = cli.port;
 
     let srv_config = ServerConfig::new(rpc_endpoint.clone(), cli.debug, Some(cli.timeout));
 
