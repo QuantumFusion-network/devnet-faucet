@@ -90,10 +90,10 @@ fn update_transfer(address: &str, time: i64, tx_hash: &str) -> SqlResult<()> {
     Ok(())
 }
 
-fn can_transfer(address: &str, timeout: Option<u64>) -> SqlResult<bool> {
+fn can_transfer(address: &str, timeout: u64) -> SqlResult<bool> {
     let conn = get_db()?;
     let now = Utc::now().timestamp() as u64;
-    let two_hours_ago = now - (timeout.unwrap_or_else(|| 120) * 60);
+    let two_hours_ago = now - (timeout * 60);
 
     // Check if there are recent transfers
     let count: i64 = conn.query_row(
@@ -230,7 +230,7 @@ struct ServerConfig {
 }
 
 impl ServerConfig {
-    fn new(rpc_url: String, debug: bool, timeout: Option<u64>) -> Self {
+    fn new(rpc_url: String, debug: bool, timeout: u64) -> Self {
         Self {
             rpc_url: rpc_url,
             debug: debug,
@@ -261,7 +261,7 @@ async fn main() {
     
     let port = cli.port;
 
-    let srv_config = ServerConfig::new(rpc_endpoint.clone(), cli.debug, Some(cli.timeout));
+    let srv_config = ServerConfig::new(rpc_endpoint.clone(), cli.debug, cli.timeout);
 
     let hello = warp::path::end()
         .map(|| "QF faucet base server");
